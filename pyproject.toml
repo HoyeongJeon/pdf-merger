@@ -1,0 +1,38 @@
+[project]
+name = "pdf-merger"
+version = "0.1.0"
+description = "여러 PDF를 하나로 합쳐주는 Windows용 작은 앱"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pypdf>=6.19.0",
+    "pyside6>=6.11.2",
+]
+
+[project.gui-scripts]
+pdf-merger = "pdf_merger:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+    "pytest>=8",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001"]  # 한글 UI 문자열의 전각/특수 문자 경고는 무시
+
+[tool.ruff.lint.per-file-ignores]
+"src/pdf_merger/app.py" = ["N802"]  # Qt 이벤트 메서드는 camelCase
+"tests/test_app.py" = ["E402"]      # Qt 플랫폼 설정 후 import 해야 함
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

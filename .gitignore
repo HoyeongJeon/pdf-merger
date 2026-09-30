@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.py[oc]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# PyInstaller
+build/
+dist/
+*.spec
