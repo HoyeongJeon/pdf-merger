@@ -1,12 +1,20 @@
 """PDF 병합기 GUI (PySide6)."""
 
-import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelectionModel, Qt, QThread, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QDesktopServices,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QFileOpenEvent,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -32,7 +40,17 @@ PAGES_ROLE = Qt.ItemDataRole.UserRole + 1
 
 def natural_key(path: Path) -> list[int | str]:
     """'2.pdf'가 '10.pdf'보다 앞에 오도록 숫자를 숫자로 비교한다."""
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path.name)]
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", display_name(path))]
+
+
+def display_name(path: Path) -> str:
+    """macOS가 자모로 풀어 둔(NFD) 한글 이름도 보통 글자(NFC)로 맞춘다."""
+    return unicodedata.normalize("NFC", path.name)
+
+
+def open_path(path: Path) -> None:
+    """기본 프로그램(Windows 탐색기, macOS Finder 등)으로 연다."""
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
 def expand_pdf_paths(paths: list[Path]) -> list[Path]:
@@ -109,6 +127,7 @@ class MainWindow(QMainWindow):
         self.resize(640, 480)
         self.setMinimumSize(480, 320)
         self._thread: MergeThread | None = None
+        self._opened_files: list[Path] = []
 
         self.list = PdfListWidget()
         self.list.files_dropped.connect(self.add_paths)
@@ -142,6 +161,7 @@ class MainWindow(QMainWindow):
         self.btn_merge.clicked.connect(self.merge)
 
         QShortcut(QKeySequence.StandardKey.Delete, self.list, self.remove_selected)
+        QShortcut(QKeySequence(Qt.Key.Key_Backspace), self.list, self.remove_selected)  # Mac의 delete 키
         QShortcut(QKeySequence.StandardKey.Open, self, self.choose_files)
         QShortcut(QKeySequence("Ctrl+Up"), self.list, lambda: self.move_selected(-1))
         QShortcut(QKeySequence("Ctrl+Down"), self.list, lambda: self.move_selected(1))
@@ -193,7 +213,7 @@ class MainWindow(QMainWindow):
                 except PdfError as e:
                     errors.append(str(e))
                     continue
-                item = QListWidgetItem(f"{path.name}   ({pages}쪽)")
+                item = QListWidgetItem(f"{display_name(path)}   ({pages}쪽)")
                 item.setData(PATH_ROLE, path)
                 item.setData(PAGES_ROLE, pages)
                 item.setToolTip(str(path))
@@ -260,9 +280,9 @@ class MainWindow(QMainWindow):
         box.addButton("닫기", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() is open_file:
-            os.startfile(output)
+            open_path(output)
         elif box.clickedButton() is open_dir:
-            os.startfile(output.parent)
+            open_path(output.parent)
 
     def _on_failure(self, message: str) -> None:
         QMessageBox.critical(self, APP_NAME, message)
@@ -297,6 +317,20 @@ class MainWindow(QMainWindow):
         paths = self.paths()
         return str(paths[-1].parent) if paths else str(Path.home() / "Documents")
 
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        # macOS는 앱 아이콘에 끌어다 놓은 파일을 파일마다 FileOpen 이벤트로 보낸다.
+        # 한 번에 들어온 파일들을 모았다가 한꺼번에 추가한다.
+        if isinstance(event, QFileOpenEvent):
+            if not self._opened_files:
+                QTimer.singleShot(0, self._add_opened_files)
+            self._opened_files.append(Path(event.file()))
+            return True
+        return super().eventFilter(obj, event)
+
+    def _add_opened_files(self) -> None:
+        paths, self._opened_files = self._opened_files, []
+        self.add_paths(paths)
+
     def closeEvent(self, event) -> None:
         if self._thread and self._thread.isRunning():
             self._thread.wait()
@@ -307,6 +341,7 @@ def run() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     window = MainWindow()
+    app.installEventFilter(window)
     window.show()
     # 명령줄이나 exe 아이콘에 끌어다 놓은 파일도 바로 추가한다.
     if len(sys.argv) > 1:
