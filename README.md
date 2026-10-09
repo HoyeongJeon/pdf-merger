@@ -27,12 +27,23 @@ uv run ruff check .          # 린트
 
 ```powershell
 uv run pyinstaller --noconfirm --onefile --windowed --name PDF-Merger `
+  --icon src/pdf_merger/assets/icon.ico `
+  --add-data "src/pdf_merger/assets/icon.png:pdf_merger/assets" `
   --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtQml `
   --exclude-module PySide6.QtQuick --exclude-module PySide6.QtPdf `
   src/pdf_merger/__main__.py
 ```
 
 결과물은 `dist\PDF-Merger.exe`입니다.
+
+### 아이콘
+
+`src/pdf_merger/assets/`의 `icon.png`(앱 창) / `icon.ico`(Windows) / `icon.icns`(macOS)는
+`scripts/make_icon.py`가 그린 것입니다. 모양을 바꾸려면 스크립트를 고치고 다시 실행합니다.
+
+```powershell
+uv run python scripts/make_icon.py
+```
 
 ## 구조
 

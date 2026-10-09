@@ -9,11 +9,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QFileOpenEvent
+from PySide6.QtGui import QDesktopServices, QFileOpenEvent, QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from pdf_merger.app import MainWindow, expand_pdf_paths, natural_key
+from pdf_merger.app import ICON_PATH, MainWindow, expand_pdf_paths, natural_key
 from tests.test_merge import make_pdf
 
 
@@ -144,3 +144,7 @@ def test_natural_key_ignores_unicode_normalization() -> None:
     ga = Path(unicodedata.normalize("NFC", "가.pdf"))
     na = Path(unicodedata.normalize("NFD", "나.pdf"))
     assert sorted([na, ga], key=natural_key) == [ga, na]
+
+
+def test_app_icon_loads(qapp: QApplication) -> None:
+    assert not QIcon(str(ICON_PATH)).isNull()

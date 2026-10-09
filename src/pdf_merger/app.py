@@ -12,6 +12,7 @@ from PySide6.QtGui import (
     QDragMoveEvent,
     QDropEvent,
     QFileOpenEvent,
+    QIcon,
     QKeySequence,
     QShortcut,
 )
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 from pdf_merger.merge import PdfError, merge_pdfs, page_count
 
 APP_NAME = "PDF 병합기"
+ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
 PATH_ROLE = Qt.ItemDataRole.UserRole
 PAGES_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -340,6 +342,7 @@ class MainWindow(QMainWindow):
 def run() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
     window = MainWindow()
     app.installEventFilter(window)
     window.show()
