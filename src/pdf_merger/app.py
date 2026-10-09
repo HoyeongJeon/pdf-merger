@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(done)
 
     def _on_success(self, output: Path, pages: int) -> None:
+        self.list.clear()  # 다음 병합을 바로 시작할 수 있게 목록을 비운다 (원본 파일은 그대로)
         box = QMessageBox(self)
         box.setWindowTitle(APP_NAME)
         box.setIcon(QMessageBox.Icon.Information)

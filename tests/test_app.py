@@ -7,7 +7,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from pdf_merger.app import MainWindow, expand_pdf_paths
 from tests.test_merge import make_pdf
@@ -70,3 +70,27 @@ def test_expand_ignores_non_pdf(tmp_path: Path) -> None:
     txt.write_text("x")
     upper = make_pdf(tmp_path / "B.PDF", [100])
     assert expand_pdf_paths([txt, upper]) == [upper]
+
+
+def test_list_cleared_after_successful_merge(
+    tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = [make_pdf(tmp_path / f"{c}.pdf", [100]) for c in "ab"]
+    window.add_paths(files)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)  # 완료 창을 띄우지 않는다
+
+    window._on_success(tmp_path / "out.pdf", 2)
+
+    assert window.paths() == []
+    assert all(f.exists() for f in files)  # 원본 파일은 그대로 둔다
+
+
+def test_list_kept_after_failed_merge(
+    tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window.add_paths([make_pdf(tmp_path / f"{c}.pdf", [100]) for c in "ab"])
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a: None)
+
+    window._on_failure("실패")
+
+    assert names(window) == ["a.pdf", "b.pdf"]
