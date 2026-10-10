@@ -1,7 +1,7 @@
 [project]
 name = "pdf-merger"
 version = "0.1.0"
-description = "여러 PDF를 하나로 합쳐주는 Windows용 작은 앱"
+description = "여러 PDF를 하나로 합쳐주는 작은 앱 (Windows / macOS)"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
