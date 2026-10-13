@@ -8,11 +8,13 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QFileOpenEvent, QIcon
+from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QDropEvent, QFileOpenEvent, QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
+from pdf_merger import app
+from pdf_merger.activate import bring_to_front
 from pdf_merger.app import ICON_PATH, MainWindow, expand_pdf_paths, natural_key
 from tests.test_merge import make_pdf, widths_of
 
@@ -229,3 +231,33 @@ def test_merge_unlocks_locked_pdf(
     assert dialogs == []
     assert widths_of(out) == [100, 200]
     assert window.paths() == []
+
+
+def drop_files(window: MainWindow, files: list[Path]) -> None:
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(f)) for f in files])
+    event = QDropEvent(
+        QPointF(5, 5), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+    )
+    window.list.dropEvent(event)
+
+
+def test_drop_brings_window_to_front_then_adds(
+    tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = [make_pdf(tmp_path / f"{c}.pdf", [100]) for c in "ab"]
+    activated: list[list[str]] = []
+    monkeypatch.setattr(app, "bring_to_front", lambda w: activated.append(names(window)))
+
+    drop_files(window, files)
+    # 드롭 처리 중에 파일을 읽거나 창을 띄우면 끌어 온 탐색기가 그동안 멈춰 있으므로 나중에 한다.
+    assert names(window) == []
+    QTest.qWait(10)
+
+    assert activated == [[]]  # 파일을 넣기 전에 창을 앞으로 가져온다 (암호 창이 앞에 뜨도록)
+    assert names(window) == ["a.pdf", "b.pdf"]
+
+
+def test_bring_to_front_runs(window: MainWindow) -> None:
+    window.show()
+    bring_to_front(window)  # 실제로 앞에 오는지는 화면이 있어야 알 수 있으니, 오류 없이 도는지만 본다

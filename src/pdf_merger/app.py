@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pdf_merger.activate import bring_to_front
 from pdf_merger.merge import PasswordError, PdfError, merge_pdfs, page_count
 
 APP_NAME = "PDF 병합기"
@@ -97,9 +98,14 @@ class PdfListWidget(QListWidget):
         if e.mimeData().hasUrls():
             paths = [Path(u.toLocalFile()) for u in e.mimeData().urls() if u.isLocalFile()]
             e.acceptProposedAction()
-            self.files_dropped.emit(paths)
+            # 끌어 온 탐색기/Finder는 이 함수가 끝날 때까지 기다리므로, 파일 읽기나 암호 창은 드롭이 끝난 뒤에 한다.
+            QTimer.singleShot(0, lambda: self._receive(paths))
         else:
             super().dropEvent(e)
+
+    def _receive(self, paths: list[Path]) -> None:
+        bring_to_front(self.window())  # 끌어다 놓으면 이 창으로 포커스가 오게 한다
+        self.files_dropped.emit(paths)
 
 
 class MergeThread(QThread):
