@@ -3,16 +3,16 @@ from pathlib import Path
 import pytest
 from pypdf import PdfReader, PdfWriter
 
-from pdf_merger.merge import PdfError, merge_pdfs, page_count
+from pdf_merger.merge import PasswordError, PdfError, merge_pdfs, page_count
 
 
-def make_pdf(path: Path, widths: list[int], password: str | None = None) -> Path:
+def make_pdf(path: Path, widths: list[int], password: str | None = None, algorithm: str = "RC4-128") -> Path:
     """페이지 너비로 각 페이지를 구분할 수 있는 테스트용 PDF를 만든다."""
     writer = PdfWriter()
     for w in widths:
         writer.add_blank_page(width=w, height=100)
     if password is not None:
-        writer.encrypt(user_password=password, owner_password="owner")
+        writer.encrypt(user_password=password, owner_password="owner", algorithm=algorithm)
     writer.write(path)
     return path
 
@@ -68,10 +68,33 @@ def test_empty_password_pdf_is_merged(tmp_path: Path) -> None:
     assert widths_of(tmp_path / "out.pdf") == [100, 200]
 
 
-def test_password_pdf_is_rejected(tmp_path: Path) -> None:
+def test_password_pdf_needs_password(tmp_path: Path) -> None:
     locked = make_pdf(tmp_path / "secret.pdf", [100], password="1234")
-    with pytest.raises(PdfError, match="암호"):
+    with pytest.raises(PasswordError, match="secret"):
         page_count(locked)
+
+
+@pytest.mark.parametrize("algorithm", ["RC4-128", "AES-256"])
+def test_password_pdf_opens_with_password(tmp_path: Path, algorithm: str) -> None:
+    locked = make_pdf(tmp_path / "secret.pdf", [100, 101], password="1234", algorithm=algorithm)
+    assert page_count(locked, password="1234") == 2
+
+
+def test_wrong_password_is_rejected(tmp_path: Path) -> None:
+    locked = make_pdf(tmp_path / "secret.pdf", [100], password="1234", algorithm="AES-256")
+    with pytest.raises(PasswordError):
+        page_count(locked, password="0000")
+
+
+def test_merge_unlocks_with_given_passwords(tmp_path: Path) -> None:
+    locked = make_pdf(tmp_path / "locked.pdf", [100], password="1234", algorithm="AES-256")
+    plain = make_pdf(tmp_path / "plain.pdf", [200])
+    out = tmp_path / "out.pdf"
+
+    merge_pdfs([locked, plain, locked], out, passwords={locked: "1234"})
+
+    assert widths_of(out) == [100, 200, 100]
+    assert not PdfReader(out).is_encrypted  # 결과 파일에는 암호가 없다
 
 
 def test_broken_pdf_is_rejected(tmp_path: Path) -> None:

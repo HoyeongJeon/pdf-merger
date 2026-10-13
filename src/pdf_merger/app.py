@@ -21,7 +21,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -32,12 +34,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pdf_merger.merge import PdfError, merge_pdfs, page_count
+from pdf_merger.merge import PasswordError, PdfError, merge_pdfs, page_count
 
 APP_NAME = "PDF 병합기"
 ICON_PATH = Path(__file__).parent / "assets" / "icon.png"
 PATH_ROLE = Qt.ItemDataRole.UserRole
 PAGES_ROLE = Qt.ItemDataRole.UserRole + 1
+PASSWORD_ROLE = Qt.ItemDataRole.UserRole + 2  # 암호는 메모리에만 두고 파일로 저장하지 않는다
 
 
 def natural_key(path: Path) -> list[int | str]:
@@ -106,14 +109,15 @@ class MergeThread(QThread):
     succeeded = Signal(object, int)  # (출력 경로, 총 페이지 수)
     failed = Signal(str)
 
-    def __init__(self, inputs: list[Path], output: Path) -> None:
+    def __init__(self, inputs: list[Path], output: Path, passwords: dict[Path, str]) -> None:
         super().__init__()
         self.inputs = inputs
         self.output = output
+        self.passwords = passwords
 
     def run(self) -> None:
         try:
-            total = merge_pdfs(self.inputs, self.output, on_progress=self.progress.emit)
+            total = merge_pdfs(self.inputs, self.output, on_progress=self.progress.emit, passwords=self.passwords)
         except PdfError as e:
             self.failed.emit(str(e))
         except Exception as e:  # 예상 못한 오류도 사용자에게 보여준다
@@ -201,6 +205,10 @@ class MainWindow(QMainWindow):
     def paths(self) -> list[Path]:
         return [self.list.item(i).data(PATH_ROLE) for i in range(self.list.count())]
 
+    def passwords(self) -> dict[Path, str]:
+        items = (self.list.item(i) for i in range(self.list.count()))
+        return {it.data(PATH_ROLE): it.data(PASSWORD_ROLE) for it in items if it.data(PASSWORD_ROLE) is not None}
+
     def choose_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(self, "PDF 선택", self._last_dir(), "PDF 파일 (*.pdf)")
         self.add_paths([Path(f) for f in files])
@@ -211,19 +219,46 @@ class MainWindow(QMainWindow):
         try:
             for path in expand_pdf_paths(paths):
                 try:
-                    pages = page_count(path)
+                    opened = self._count_pages(path)
                 except PdfError as e:
                     errors.append(str(e))
                     continue
-                item = QListWidgetItem(f"{display_name(path)}   ({pages}쪽)")
+                if opened is None:  # 암호 입력을 취소했다
+                    continue
+                pages, password = opened
+                lock = "🔒 " if password is not None else ""
+                item = QListWidgetItem(f"{lock}{display_name(path)}   ({pages}쪽)")
                 item.setData(PATH_ROLE, path)
                 item.setData(PAGES_ROLE, pages)
+                item.setData(PASSWORD_ROLE, password)
                 item.setToolTip(str(path))
                 self.list.addItem(item)
         finally:
             QApplication.restoreOverrideCursor()
         if errors:
             QMessageBox.warning(self, APP_NAME, "다음 파일은 추가하지 못했습니다:\n\n" + "\n".join(errors))
+
+    def _count_pages(self, path: Path) -> tuple[int, str | None] | None:
+        """페이지 수와, 암호가 걸려 있었다면 사용자가 입력한 암호를 돌려준다. 암호 입력을 취소하면 None."""
+        password: str | None = None
+        while True:
+            try:
+                return page_count(path, password), password
+            except PasswordError:
+                password = self._ask_password(path, wrong=password is not None)
+                if password is None:
+                    return None
+
+    def _ask_password(self, path: Path, wrong: bool) -> str | None:
+        label = f"'{display_name(path)}' 파일은 암호가 걸려 있습니다.\n암호를 입력하세요."
+        if wrong:
+            label = "암호가 틀렸습니다. 다시 입력하세요.\n\n" + label
+        QApplication.setOverrideCursor(Qt.CursorShape.ArrowCursor)  # 파일 읽는 동안의 대기 커서를 잠시 푼다
+        try:
+            password, ok = QInputDialog.getText(self, APP_NAME, label, QLineEdit.EchoMode.Password)
+        finally:
+            QApplication.restoreOverrideCursor()
+        return password if ok else None
 
     def remove_selected(self) -> None:
         for item in self.list.selectedItems():
@@ -260,7 +295,7 @@ class MainWindow(QMainWindow):
             output = output.with_name(output.name + ".pdf")
 
         self._set_busy(True)
-        self._thread = MergeThread(inputs, output)
+        self._thread = MergeThread(inputs, output, self.passwords())
         self._thread.progress.connect(self._on_progress)
         self._thread.succeeded.connect(self._on_success)
         self._thread.failed.connect(self._on_failure)

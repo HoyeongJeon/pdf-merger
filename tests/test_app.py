@@ -11,15 +11,24 @@ import pytest
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QFileOpenEvent, QIcon
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
 from pdf_merger.app import ICON_PATH, MainWindow, expand_pdf_paths, natural_key
-from tests.test_merge import make_pdf
+from tests.test_merge import make_pdf, widths_of
 
 
 @pytest.fixture(scope="session")
 def qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def dialogs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """경고/오류 창이 테스트를 멈춰 세우지 않도록, 띄우는 대신 문구를 모은다."""
+    shown: list[str] = []
+    for name in ("warning", "critical"):
+        monkeypatch.setattr(QMessageBox, name, lambda parent, title, text, *a, **k: shown.append(text))
+    return shown
 
 
 @pytest.fixture
@@ -31,6 +40,20 @@ def window(qapp: QApplication) -> Iterator[MainWindow]:
 
 def names(w: MainWindow) -> list[str]:
     return [p.name for p in w.paths()]
+
+
+def answer_passwords(monkeypatch: pytest.MonkeyPatch, *answers: str | None) -> list[str]:
+    """암호 입력 창 대신 answers를 차례로 돌려준다(None은 취소). 창에 보인 안내 문구를 모아 돌려준다."""
+    labels: list[str] = []
+    replies = iter(answers)
+
+    def get_text(parent, title, label, *args, **kwargs):
+        labels.append(label)
+        answer = next(replies)
+        return (answer or "", answer is not None)
+
+    monkeypatch.setattr(QInputDialog, "getText", get_text)
+    return labels
 
 
 def test_add_folder_uses_natural_order(tmp_path: Path, window: MainWindow) -> None:
@@ -148,3 +171,61 @@ def test_natural_key_ignores_unicode_normalization() -> None:
 
 def test_app_icon_loads(qapp: QApplication) -> None:
     assert not QIcon(str(ICON_PATH)).isNull()
+
+
+def test_locked_pdf_is_added_after_password(
+    tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locked = make_pdf(tmp_path / "secret.pdf", [100, 101], password="1234", algorithm="AES-256")
+    labels = answer_passwords(monkeypatch, "1234")
+
+    window.add_paths([locked])
+
+    assert names(window) == ["secret.pdf"]
+    assert "secret.pdf" in labels[0]
+    assert "🔒" in window.list.item(0).text()
+    assert window.summary.text() == "파일 1개 · 총 2쪽"
+
+
+def test_wrong_password_asks_again(tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    locked = make_pdf(tmp_path / "secret.pdf", [100], password="1234")
+    labels = answer_passwords(monkeypatch, "0000", "1234")
+
+    window.add_paths([locked])
+
+    assert names(window) == ["secret.pdf"]
+    assert len(labels) == 2
+    assert "틀렸" in labels[1]
+
+
+def test_cancelled_password_skips_file(
+    tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch, dialogs: list[str]
+) -> None:
+    locked = make_pdf(tmp_path / "secret.pdf", [100], password="1234")
+    plain = make_pdf(tmp_path / "plain.pdf", [200])
+    answer_passwords(monkeypatch, None)
+
+    window.add_paths([locked, plain])
+
+    assert names(window) == ["plain.pdf"]
+    assert dialogs == []  # 사용자가 직접 취소했으니 오류 창은 띄우지 않는다
+
+
+def test_merge_unlocks_locked_pdf(
+    tmp_path: Path, window: MainWindow, monkeypatch: pytest.MonkeyPatch, dialogs: list[str]
+) -> None:
+    locked = make_pdf(tmp_path / "secret.pdf", [100], password="1234", algorithm="AES-256")
+    plain = make_pdf(tmp_path / "plain.pdf", [200])
+    answer_passwords(monkeypatch, "1234")
+    window.add_paths([locked, plain])
+    out = tmp_path / "merged.pdf"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: 0)
+
+    window.merge()
+    window._thread.wait()
+    QTest.qWait(50)  # 스레드가 보낸 완료 신호를 처리한다
+
+    assert dialogs == []
+    assert widths_of(out) == [100, 200]
+    assert window.paths() == []
